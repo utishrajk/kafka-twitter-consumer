@@ -1,7 +1,9 @@
 package com.example.kafkatwitterconsumer.model;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.google.gson.annotations.SerializedName;
 
+@JsonSerialize
 public class User {
     private long id;
     private String name;
