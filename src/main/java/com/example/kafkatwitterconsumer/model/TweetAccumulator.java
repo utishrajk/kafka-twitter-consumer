@@ -9,7 +9,6 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class TweetAccumulator {
 
-    long id;
     long timestamp;
     int count;
 }

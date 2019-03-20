@@ -3,18 +3,26 @@ package com.example.kafkatwitterconsumer;
 
 import com.example.kafkatwitterconsumer.model.TweetAccumulator;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+import org.apache.flink.streaming.api.functions.windowing.AllWindowFunction;
+import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
+import org.apache.flink.util.Collector;
 import twitter4j.Status;
 import twitter4j.TwitterException;
 import twitter4j.TwitterObjectFactory;
 
+import java.util.Collection;
 import java.util.Properties;
 import java.util.UUID;
+
 
 @Slf4j
 public class Pipeline {
@@ -36,37 +44,60 @@ public class Pipeline {
         log.info("Created producer");
 
         //add your consumer as a source for your environment and get an inputStream
-        DataStream<String> inputStream = environment.addSource(consumer);
-        log.info("Created inputStream");
+        Time maxAllowedLateness = Time.seconds(5);
+        DataStream<String> inputStream = environment
+                .addSource(consumer);
 
 
-//        log.info("Writing to topic capitalizedTweets");
-//        inputStream
-//                .keyBy(schema -> schema.getId())
-//                .timeWindow(Time.seconds(10))
-//                .apply(new WindowFunction<Tweet, TweetAccumulator, Long, TimeWindow>() {
-//
-//                    @Override
-//                    public void apply(Long tweetId, TimeWindow timeWindow, Iterable<Tweet> iterable, Collector<TweetAccumulator> collector) throws Exception {
-//                        int count = ((Collection<?>) iterable).size();
-//                        System.out.println("Count : " + count);
-//                        collector.collect(new TweetAccumulator(tweetId, timeWindow.getEnd(), count));
-//                    }
-//                });
         //.addSink(flinkCapitalizedProducer);
 
         DataStream<Status> statusStream = inputStream.map(str -> {
             Status status = null;
             try {
                 status = TwitterObjectFactory.createStatus(str);
+                //System.out.println("status created : " + status.getId());
             } catch (TwitterException e) {
                 e.printStackTrace();
             }
             return status;
+        }).assignTimestampsAndWatermarks(new BoundedOutOfOrdernessTimestampExtractor<Status>(maxAllowedLateness) {
+            @Override
+            public long extractTimestamp(Status status) {
+                //System.out.println("extracting timestamp...");
+                return status.getCreatedAt().getTime();
+            }
         });
 
-        //inputStream.print();
-        statusStream.print();
+        DataStream<Integer> tweetTupleStream = statusStream
+                //.keyBy(tweet -> tweet.getId())
+                .map(new MapFunction<Status, Integer>() {
+                    @Override
+                    public Integer map(Status status) throws Exception {
+                        return 1;
+                    }
+                });
+
+//        DataStream<Integer> accumulatorStream = tweetTupleStream
+//                .timeWindowAll(Time.seconds(60))
+//                .reduce(new ReduceFunction<Integer>() {
+//                    @Override
+//                    public Integer reduce(Integer t1, Integer t2) throws Exception {
+//                        return t1 + t2;
+//                    }
+//                });
+
+        DataStream<TweetAccumulator> accumulatorDataSteam = tweetTupleStream
+                .timeWindowAll(Time.seconds(10))
+                .apply(new AllWindowFunction<Integer, TweetAccumulator, TimeWindow>() {
+                    @Override
+                    public void apply(TimeWindow timeWindow, Iterable<Integer> iterable, Collector<TweetAccumulator> collector) throws Exception {
+                        int count = ((Collection<?>) iterable).size();
+                        collector.collect(new TweetAccumulator(timeWindow.getEnd(), count));
+                    }
+                });
+
+
+        accumulatorDataSteam.print();
 
         environment.execute();
 

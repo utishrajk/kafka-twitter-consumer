@@ -11,9 +11,6 @@ public class KafkaTwitterConsumerApplication {
 
 		try {
 			Pipeline.invoke();
-
-			//Pipeline2.invoke();
-
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
