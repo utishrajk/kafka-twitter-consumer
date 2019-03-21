@@ -49,55 +49,30 @@ public class Pipeline {
                 .addSource(consumer);
 
 
-        //.addSink(flinkCapitalizedProducer);
-
-        DataStream<Status> statusStream = inputStream.map(str -> {
-            Status status = null;
-            try {
-                status = TwitterObjectFactory.createStatus(str);
-                //System.out.println("status created : " + status.getId());
-            } catch (TwitterException e) {
-                e.printStackTrace();
-            }
-            return status;
-        }).assignTimestampsAndWatermarks(new BoundedOutOfOrdernessTimestampExtractor<Status>(maxAllowedLateness) {
-            @Override
-            public long extractTimestamp(Status status) {
-                //System.out.println("extracting timestamp...");
-                return status.getCreatedAt().getTime();
-            }
-        });
-
-        DataStream<Integer> tweetTupleStream = statusStream
-                //.keyBy(tweet -> tweet.getId())
-                .map(new MapFunction<Status, Integer>() {
-                    @Override
-                    public Integer map(Status status) throws Exception {
-                        return 1;
+        DataStream<TweetAccumulator> accumulatorDataStream = inputStream
+                .map(str -> {
+                    Status status = null;
+                    try {
+                        status = TwitterObjectFactory.createStatus(str);
+                    } catch (TwitterException e) {
+                        e.printStackTrace();
                     }
-                });
-
-//        DataStream<Integer> accumulatorStream = tweetTupleStream
-//                .timeWindowAll(Time.seconds(60))
-//                .reduce(new ReduceFunction<Integer>() {
-//                    @Override
-//                    public Integer reduce(Integer t1, Integer t2) throws Exception {
-//                        return t1 + t2;
-//                    }
-//                });
-
-        DataStream<TweetAccumulator> accumulatorDataSteam = tweetTupleStream
+                    return status;
+                })
+                .assignTimestampsAndWatermarks(new BoundedOutOfOrdernessTimestampExtractor<Status>(maxAllowedLateness) {
+                    @Override
+                    public long extractTimestamp(Status status) {
+                        return status.getCreatedAt().getTime();
+                    }
+                })
+                .map((MapFunction<Status, Integer>) status -> 1)
                 .timeWindowAll(Time.seconds(10))
-                .apply(new AllWindowFunction<Integer, TweetAccumulator, TimeWindow>() {
-                    @Override
-                    public void apply(TimeWindow timeWindow, Iterable<Integer> iterable, Collector<TweetAccumulator> collector) throws Exception {
-                        int count = ((Collection<?>) iterable).size();
-                        collector.collect(new TweetAccumulator(timeWindow.getEnd(), count));
-                    }
+                .apply((AllWindowFunction<Integer, TweetAccumulator, TimeWindow>) (timeWindow, iterable, collector) -> {
+                    collector.collect(new TweetAccumulator(timeWindow.getEnd(), ((Collection<?>) iterable).size()));
                 });
 
 
-        accumulatorDataSteam.print();
+        accumulatorDataStream.print();
 
         environment.execute();
 
@@ -118,8 +93,7 @@ public class Pipeline {
     }
 
     public static FlinkKafkaProducer<TweetAccumulator> createKafkaProducer(String topic) {
-        //return new FlinkKafkaProducer<>("localhost:9092", topic, new SimpleStringSchema());
-        return null;
+        return new FlinkKafkaProducer<TweetAccumulator>("localhost:9092", topic, new SimpleStringSchema());
     }
 
     public static String generateScore() {
