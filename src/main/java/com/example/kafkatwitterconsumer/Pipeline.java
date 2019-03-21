@@ -2,6 +2,7 @@ package com.example.kafkatwitterconsumer;
 
 
 import com.example.kafkatwitterconsumer.model.TweetAccumulator;
+import com.example.kafkatwitterconsumer.model.TweetAccumulatorSerializationSchema;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
@@ -65,14 +66,27 @@ public class Pipeline {
                         return status.getCreatedAt().getTime();
                     }
                 })
-                .map((MapFunction<Status, Integer>) status -> 1)
+                .map(new MapFunction<Status, Integer>() {
+                    @Override
+                    public Integer map(Status status) throws Exception {
+                        return 1;
+                    }
+                })
                 .timeWindowAll(Time.seconds(10))
-                .apply((AllWindowFunction<Integer, TweetAccumulator, TimeWindow>) (timeWindow, iterable, collector) -> {
-                    collector.collect(new TweetAccumulator(timeWindow.getEnd(), ((Collection<?>) iterable).size()));
+                .apply(new AllWindowFunction<Integer, TweetAccumulator, TimeWindow>() {
+                    @Override
+                    public void apply(TimeWindow timeWindow, Iterable<Integer> iterable, Collector<TweetAccumulator> collector) throws Exception {
+                        int count = ((Collection<?>) iterable).size();
+                        collector.collect(new TweetAccumulator(timeWindow.getEnd(), count));
+                    }
                 });
 
 
-        accumulatorDataStream.print();
+        //accumulatorDataStream.print();
+
+        FlinkKafkaProducer<TweetAccumulator> tweetAccumulatorFlinkKafkaProducer = createKafkaProducer("tweetAccumulator");
+
+        accumulatorDataStream.addSink(tweetAccumulatorFlinkKafkaProducer);
 
         environment.execute();
 
@@ -93,7 +107,7 @@ public class Pipeline {
     }
 
     public static FlinkKafkaProducer<TweetAccumulator> createKafkaProducer(String topic) {
-        return new FlinkKafkaProducer<TweetAccumulator>("localhost:9092", topic, new SimpleStringSchema());
+        return new FlinkKafkaProducer<>("localhost:9092", topic, new TweetAccumulatorSerializationSchema());
     }
 
     public static String generateScore() {
